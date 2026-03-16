@@ -15,3 +15,6 @@ Because this study is a large cross-country study, no one is expected to replica
 [DIRECT+PLUS opportunity][1] – Jordan Wagge and Jon Grahe are organizing a [Direct+Plus CREP replication][2] of this study to test a new social status measure. See more details here:
 
 Link to the OSF Storage Project Page: https://osf.io/qdx7p/files/osfstorage
+
+**Additional Information:**
+The data is stored in a .csv file titled "Diener_et_al_replication_data.csv". Data cleaning is located in the "README.Rmd". Both of these files are needed in order to use the data. Additionally we have added a HTML file to easily understand the data cleaning process. A Diener et al. replication cleaning Codebook is provided. 
