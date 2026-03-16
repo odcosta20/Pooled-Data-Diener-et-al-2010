@@ -1,0 +1,472 @@
+---
+title: "A compilation of replications of the Diener et al.2010 paper"
+author: "Theodore Rogers, Olivia Costa, Quincey Feragen, Penelope Corbett"
+date: "2026-01-27"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+This is the README script to clean the replications from the Diener et al. (2010) project. R version 4.5.2 (2025-10-31) is used for this script. 
+
+Packages needed:
+```{r}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(tidyverse)
+library(ltm)
+library(gridExtra)
+library(rmarkdown)
+```
+
+Reading excel spreadsheet
+```{r setup, include=FALSE}
+big_data <- read.csv("Diener_et_al_replication_data.csv")
+#View(big_data)
+```
+creating data frame, the original data frame (big_data) is left untouched
+```{r}
+dat <- big_data
+#view(dat)
+dat = cbind.data.frame(big_data)
+```
+
+Changing values to their categorical variables
+```{r}
+#ladder
+ladder <- as.factor(dat$ladder)
+dat$ladder <- ladder
+
+convert_yes_no <- function(column) {
+  column <- as.character(column)
+  column[column == "1"] <- "yes"
+  column[column == "2"] <- "no"
+  return(column)
+}
+
+dat[3:8] <- lapply(dat[3:8], convert_yes_no)
+dat[11:16] <- lapply(dat[11:16], convert_yes_no)
+dat[19:23] <- lapply(dat[19:23], convert_yes_no)
+
+# gender
+dat$gender[dat$gender == "1"] <- "woman"
+dat$gender[dat$gender == "2"] <- "man"
+dat$gender[dat$gender == "3"] <- "nonbinary"
+dat$gender[dat$gender == "4"] <- NA
+# maritalStatus
+dat$maritalStatus[dat$maritalStatus == "1"] <- "married"
+dat$maritalStatus[dat$maritalStatus == "2"] <- "domestic partnership"
+dat$maritalStatus[dat$maritalStatus == "3"] <- "single"
+dat$maritalStatus[dat$maritalStatus == "4"] <- "divorced or separated"
+dat$maritalStatus[dat$maritalStatus == "5"] <- "widowed"
+dat$maritalStatus[dat$maritalStatus == "6"] <- NA
+
+# residentialArea
+dat$residentialArea[dat$residentialArea == "1"] <- "rural"
+dat$residentialArea[dat$residentialArea == "2"] <- "village"
+dat$residentialArea[dat$residentialArea == "3"] <- "urban_city"
+dat$residentialArea[dat$residentialArea == "4"] <- "suburban"
+
+# education
+dat$education[dat$education == "1"] <- "primary or less"
+dat$education[dat$education == "2"] <- "secondary"
+dat$education[dat$education == "3"] <- "some teriary"
+dat$education[dat$education == "4"] <- "full teritary"
+dat$education[dat$education == "5"] <- "graduate degree"
+dat$education[dat$education == "6"] <- "other"
+
+#Cleaning Income Data
+dat$income <- as.character(dat$income)
+dat$income[dat$income %in% c("NA", ".")] <- NA
+dat$income <- as.numeric(dat$income)
+```
+
+**subsets for dataSets split by country:**
+For this section, I modified the values of the different incomes by converting their income to 2023 USD, after looking up the conversion rate on Google. 
+Recommendation: You may want to consider removing any outlier's in the data. Additionally, several dataframes were created by continent in case someone would like to analyze the data between continents. 
+```{r}
+dat <- dat %>%
+  mutate(
+    raw_income = readr::parse_number(as.character(income)),
+    income = case_when(
+      dataSet == "HongKong" ~ raw_income * 0.13,
+      dataSet == "vienna"   ~ raw_income * 1.09,
+      dataSet %in% c("toronto", "202psy") ~ raw_income * 0.73,
+      TRUE ~ raw_income
+    )
+  )
+
+#Sanity check to make sure no rows were missed in the above conversion. All good!
+dat %>%
+  filter(
+    !dataSet %in% c(
+      "HongKong", "vienna", "toronto", "202psy",
+      "2018spring", "psy250.", "hatton", "haneda", "2019replication"
+    )
+  ) %>%
+  count(dataSet)
+
+#Sanity check income ranges
+dat %>%
+  group_by(dataSet) %>%
+  summarize(
+    n = n(),
+    na_income = sum(is.na(income)),
+    min_income = min(income, na.rm = TRUE),
+    median_income = median(income, na.rm = TRUE),
+    max_income = max(income, na.rm = TRUE)
+  )
+```
+
+Cleaning the variables in the data frame, and coding them in accordance with the replication survey values.
+```{r}
+positive_vars <- c("enjoyment", "smileLaugh", "respect", "learn", "opportunity", "livingStandard", "emergency", "time", "food", "shelter", "internetAccess", "computer", "television")
+
+#Recode function for yes/nmo -> 1/0 (positive)
+for (var in positive_vars){
+  vals <- unique(dat[[var]])
+  
+  if (any(c("yes", "no") %in% vals)) {
+    dat[[var]] <- as.numeric(dplyr::recode(tolower(as.character(dat[[var]])), "yes" = 1, "no"= 0, .default = NA_real_))
+  }else{
+    message(paste("Skipping", var, "no-not in yes/no format"))
+  }
+}
+
+#Recode function for yes/nmo -> -1/0 (positive)
+negative_vars <- c("sadness", "anger", "depression", "worry")
+
+for (var in negative_vars){
+  vals <- unique(dat[[var]])
+  
+  if (any(c("yes", "no") %in% vals)) {
+    dat[[var]] <- as.numeric(dplyr::recode(tolower(as.character(dat[[var]])), "yes" = -1, "no"= 0, .default = NA_real_))
+  }else{
+    message(paste("Skipping", var, "no-not in yes/no format"))
+  }
+}
+```
+
+Cleaning the variables in the data frame, and coding them in accordance with the replication survey values.
+```{r}
+#Average smileLaugh and enjoyment into Positive feelings column
+dat$PositiveFeelings <- rowMeans(dat[, c("smileLaugh", "enjoyment")], na.rm = TRUE)
+
+#Average worry, sadness, depression, and anger into Negative feelings column
+dat$NegativeFeelings <- rowMeans(dat[, c("worry", "sadness", "depression", "anger")], na.rm = TRUE)
+
+#Create another column with logIncome
+dat$logIncome <- ifelse(!is.na(dat$income) & dat$income > 0,
+                        log(dat$income),
+                        NA_real_)
+
+#Create another column of luxury conveniences
+dat$LuxuryConveniences <- rowMeans(dat[, c("television", "internetAccess", "computer")], na.rm = TRUE)
+
+#Create another column of basic needs
+dat$BasicNeeds <- rowMeans(dat[, c("food", "shelter")], na.rm = TRUE)
+
+#Create another column of psych needs
+dat$PsychNeeds <- rowMeans(dat[, c("respect", "learn", "opportunity", "time", "emergency")], na.rm = TRUE)
+```
+
+Renaming study site variables for cleanliness
+```{r}
+dat <- dat %>%
+  dplyr::mutate(
+    study_site = dplyr::case_when(
+      dataSet == "toronto" ~ "Study_Site_1",
+      dataSet == "vienna" ~ "Study_Site_2",
+      dataSet == "2018spring" ~ "Study_Site_3",
+      dataSet == "2019replication" ~ "Study_Site_4",
+      dataSet == "psy250." ~ "Study_Site_5",
+      dataSet == "HongKong" ~ "Study_Site_6",
+      dataSet == "hatton" ~ "Study_Site_7",
+      dataSet == "202psy" ~ "Study_Site_8",
+      dataSet == "haneda" ~ "Study_Site_9",
+      TRUE ~ NA_character_
+    )
+  )
+class(dat$study_site)
+```
+
+Demographics per study site made into tables
+```{r}
+#Sanity check on age 
+dat <- dat %>%
+  mutate(
+    age = readr::parse_number(as.character(age))
+  )
+
+#Numeric demographics table (age & income)
+numeric_demographics_table <- dat %>%
+  dplyr::group_by(study_site) %>%
+  dplyr::summarize(
+    n = n(),
+
+    age_n = sum(!is.na(age)),
+    age_mean   = if (age_n > 0) mean(age, na.rm = TRUE) else NA_real_,
+    age_median = if (age_n > 0) median(age, na.rm = TRUE) else NA_real_,
+    age_min    = if (age_n > 0) min(age, na.rm = TRUE) else NA_real_,
+    age_max    = if (age_n > 0) max(age, na.rm = TRUE) else NA_real_,
+
+    income_n = sum(!is.na(income)),
+    income_mean   = if (income_n > 0) mean(income, na.rm = TRUE) else NA_real_,
+    income_median = if (income_n > 0) median(income, na.rm = TRUE) else NA_real_,
+    income_min    = if (income_n > 0) min(income, na.rm = TRUE) else NA_real_,
+    income_max    = if (income_n > 0) max(income, na.rm = TRUE) else NA_real_,
+
+    .groups = "drop"
+  )
+
+#Categorical demographics table (counts & proportions)
+categorical_demographics <- dat %>%
+  dplyr::select(study_site, gender, maritalStatus, residentialArea, education) %>%
+  pivot_longer(
+    cols = c(gender, maritalStatus, residentialArea, education),
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  dplyr::mutate(
+    value = as.character(value),
+    value = if_else(is.na(value) | trimws(value) == "", "Missing", value)
+  ) %>%
+  count(study_site, variable, value, name = "n") %>%
+  group_by(study_site, variable) %>%
+  mutate(prop = n / sum(n)) %>%
+  ungroup() %>%
+  arrange(study_site, variable, desc(n))
+
+#Which study sites are missing whole fields?
+missingness <- dat %>%
+  group_by(study_site) %>%
+  summarize(
+    age_missing = mean(is.na(age)),
+    gender_missing = mean(is.na(gender)),
+    marital_missing = mean(is.na(maritalStatus)),
+    resarea_missing = mean(is.na(residentialArea)),
+    education_missing = mean(is.na(education)),
+    income_missing = mean(is.na(income)),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(age_missing), desc(income_missing))
+
+#Viewing results
+numeric_demographics_table
+categorical_demographics
+missingness
+```
+
+**Prepping for analyses:**
+There will be two data frames, one with all participants (N = 1171), and the other that has all the NAs omitted across the dataframe. This was done, as a part of a previous project. That used a smaller dataset. 
+```{r}
+dat <- dat %>%
+  dplyr::mutate(
+    ladder = readr::parse_number(na_if(as.character(ladder), "NaN")),
+    PositiveFeelings = readr::parse_number(na_if(as.character(PositiveFeelings), "NaN")),
+    NegativeFeelings = readr::parse_number(na_if(as.character(NegativeFeelings), "NaN"))
+  )
+
+#Creating the omitted NAs data frame: this was used in the poster and other subsequent analyses, however, it is now its own data frame and you will be able to use Dat for the analyses below. 
+dat_na_omit <- dat[complete.cases(dat), ] #N = 342 (whereas Dat has N = 1171)
+```
+
+**Sample Analyses**
+For these analyses, I have dropped NAs in the columns we care about for these analyses and not overall throughout the whole data frame. To keep the sample consistent model to model.
+
+Creating the models for the predictor variables (basic needs, psych needs, luxury conveniences, standard of living, and log income)
+```{r}
+f_basic  <- ladder ~ BasicNeeds
+f_psych  <- ladder ~ BasicNeeds + PsychNeeds
+f_lux    <- ladder ~ BasicNeeds + PsychNeeds + LuxuryConveniences + livingStandard
+f_income <- ladder ~ BasicNeeds + PsychNeeds + LuxuryConveniences + livingStandard + logIncome
+
+#Creating NA-datasets for each model
+dat_basic  <- dat %>% drop_na(all.vars(f_basic))
+dat_psych  <- dat %>% drop_na(all.vars(f_psych))
+dat_lux    <- dat %>% drop_na(all.vars(f_lux))
+dat_income <- dat %>% drop_na(all.vars(f_income))
+
+#Make sure the N is locked in before running anything
+data.frame(
+  mode_spec = c("BasicNeeds", "PsychNeeds", "Luxury", "Income"),
+  N = c(nrow(dat_basic), nrow(dat_psych), nrow(dat_lux), nrow(dat_income))
+)
+
+#Fitting models to the clean datasets
+wellbeingBasicNeedsModel <- lm(f_basic,  data = dat_basic)
+wellbeingPsychNeedsModel <- lm(f_psych,  data = dat_psych)
+wellbeingLuxuryModel     <- lm(f_lux,    data = dat_lux)
+wellbeingIncomeModel     <- lm(f_income, data = dat_income)
+
+#Summaries
+summary(wellbeingBasicNeedsModel)
+summary(wellbeingPsychNeedsModel)
+summary(wellbeingLuxuryModel)
+summary(wellbeingIncomeModel)
+```
+
+Positivity Models
+```{r}
+#Defining the formulas for the positivity models
+f_pos_basic  <- PositiveFeelings ~ BasicNeeds
+f_pos_psych  <- PositiveFeelings ~ BasicNeeds + PsychNeeds
+f_pos_lux    <- PositiveFeelings ~ BasicNeeds + PsychNeeds + LuxuryConveniences + livingStandard
+f_pos_income <- PositiveFeelings ~ BasicNeeds + PsychNeeds + LuxuryConveniences + livingStandard + logIncome
+
+#Create NA-clean datasets per model
+dat_pos_basic  <- dat %>% drop_na(all.vars(f_pos_basic))
+dat_pos_psych  <- dat %>% drop_na(all.vars(f_pos_psych))
+dat_pos_lux    <- dat %>% drop_na(all.vars(f_pos_lux))
+dat_pos_income <- dat %>% drop_na(all.vars(f_pos_income))
+
+#Fitting the models on the clean datasets
+positiveBasicNeedsModel <- lm(f_pos_basic,  data = dat_pos_basic)
+positivePsychNeedsModel <- lm(f_pos_psych,  data = dat_pos_psych)
+positiveLuxuryModel     <- lm(f_pos_lux,    data = dat_pos_lux)
+positiveIncomeModel     <- lm(f_pos_income, data = dat_pos_income)
+
+#Clearing N Table
+data.frame(
+  model_spec = c("BasicNeeds",
+                 "BasicNeeds + PsychNeeds",
+                 "BasicNeeds + PsychNeeds + Luxury + LivingStandard",
+                 "Full + logIncome"),
+  N = c(nrow(dat_pos_basic),
+        nrow(dat_pos_psych),
+        nrow(dat_pos_lux),
+        nrow(dat_pos_income))
+)
+
+#Summaries
+summary(positiveBasicNeedsModel)
+summary(positivePsychNeedsModel)
+summary(positiveLuxuryModel)
+summary(positiveIncomeModel)
+```
+
+Negativity Models
+```{r} 
+#Defining the formulas for the negativity models
+f_neg_basic  <- NegativeFeelings ~ BasicNeeds
+f_neg_psych  <- NegativeFeelings ~ BasicNeeds + PsychNeeds
+f_neg_lux    <- NegativeFeelings ~ BasicNeeds + PsychNeeds + LuxuryConveniences + livingStandard
+f_neg_income <- NegativeFeelings ~ BasicNeeds + PsychNeeds + LuxuryConveniences + livingStandard + logIncome
+
+#Create NA-clean datasets per model
+dat_neg_basic  <- dat %>% drop_na(all.vars(f_neg_basic))
+dat_neg_psych  <- dat %>% drop_na(all.vars(f_neg_psych))
+dat_neg_lux    <- dat %>% drop_na(all.vars(f_neg_lux))
+dat_neg_income <- dat %>% drop_na(all.vars(f_neg_income))
+
+#Fitting the models on the clean datasets
+negativeBasicNeedsModel <- lm(f_neg_basic,  data = dat_neg_basic)
+negativePsychNeedsModel <- lm(f_neg_psych,  data = dat_neg_psych)
+negativeLuxuryModel     <- lm(f_neg_lux,    data = dat_neg_lux)
+negativeIncomeModel     <- lm(f_neg_income, data = dat_neg_income)
+
+#Clearing N Table
+data.frame(
+  model_spec = c("BasicNeeds",
+                 "BasicNeeds + PsychNeeds",
+                 "BasicNeeds + PsychNeeds + Luxury + LivingStandard",
+                 "Full + logIncome"),
+  N = c(nrow(dat_neg_basic), nrow(dat_neg_psych), nrow(dat_neg_lux), nrow(dat_neg_income))
+)
+
+#Summaries
+summary(negativeBasicNeedsModel)
+summary(negativePsychNeedsModel)
+summary(negativeLuxuryModel)
+summary(negativeIncomeModel)
+```
+
+
+Income Demographics
+```{r}
+#Total Income
+total_income <- dat %>%
+  summarise(
+    n_total = n(),
+    n_income = sum (!is.na(income)),
+    percent_income = mean(!is.na(income))*100,
+    mean_income = mean(income, na.rm = TRUE),
+    median_income = median(income, na.rm = TRUE),
+    sd_income = sd(income, na.rm = TRUE),
+    min_income = min(income, na.rm = TRUE),
+    max_income = max(income, na.rm = TRUE),
+    q1 = quantile(income, .25, na.rm = TRUE),
+    q3 = quantile(income, .75, na.rm = TRUE)
+  )
+
+# Total Income by study site
+income_by_site <- dat %>%
+  group_by(study_site)%>%
+  summarise(
+    n_total = n(),
+    n_income = sum (!is.na(income)),
+    percent_income = mean(!is.na(income))*100,
+    mean_income = mean(income, na.rm = TRUE),
+    median_income = median(income, na.rm = TRUE),
+    sd_income = sd(income, na.rm = TRUE),
+    min_income = min(income, na.rm = TRUE),
+    max_income = max(income, na.rm = TRUE),
+    q1 = quantile(income, .25, na.rm = TRUE),
+    q3 = quantile(income, .75, na.rm = TRUE)
+  )
+```
+
+Graphs
+```{r}
+#graph of positive feelings ~ Basic Needs
+graphDat <- dat
+
+ggplot(graphDat, aes(PositiveFeelings))+
+  geom_histogram(aes(BasicNeeds, fill = "Basic Needs"), binwidth = 0.5, color = "black", alpha = 0.7)+
+  geom_histogram(aes(PsychNeeds, fill = "Psychological Needs"), binwidth = 0.5, color = "black", alpha = 0.7)+
+  theme_classic()+
+  labs(title = "Relationship between Postive Feelings, Psychological Needs, and Basic Needs", 
+       y = "Participants", 
+       x = "Positive Feelings")+
+  scale_fill_manual(values = c("Basic Needs" = "darkgoldenrod3", "Psychological Needs" = "firebrick"), 
+                    name = "Variables")
+
+##graphing this another way
+ggplot(graphDat, aes(PositiveFeelings, PsychNeeds))+
+  geom_jitter(color = "firebrick4")+
+  geom_smooth(method = "lm", se = FALSE, color = "black")+
+  theme_classic()+
+  labs(title = "Relationship between Positive Feelings and Psychological Needs", 
+       x = "Positive Feelings", 
+       y = "Psychological Needs")+ theme(text = element_text(size = 14))
+
+#graph of Income and Positive Feelings
+ggplot(graphDat, aes(PositiveFeelings, logIncome))+
+  geom_jitter()+
+  geom_smooth(method = "lm", se = FALSE, color = "maroon")+
+  theme_classic()+
+  labs(title = "Relationship between Log Income and Positive Feelings", 
+       x = "Positive Feelings", 
+       y = "Log Income")+ theme(text = element_text(size = 14))
+
+#graph of Negative Feelings and Income
+ggplot(graphDat, aes(NegativeFeelings, logIncome))+
+  geom_jitter()+
+  geom_smooth(method = "lm", se = FALSE, color = "darkgoldenrod3")+
+  theme_classic()+
+  labs(title = "Relationship between Log Income and Negative Feelings", 
+       x = "Negative Feelings", 
+       y = "Log Income")+ theme(text = element_text(size = 14))
+
+#graph of Positive feelings and luxury items
+ggplot(graphDat, aes(PositiveFeelings, LuxuryConveniences))+
+  geom_jitter(color = "firebrick4")+
+  geom_smooth(method = "lm", se = FALSE, color = "black")+
+  theme_classic()+
+  labs(title = "Relationship between Positive Feelings and Luxury Conveniences", 
+       x = "Positive Feelings", 
+       y = "Luxury Conveniences")+ theme(text = element_text(size = 14))
+
+```
+
